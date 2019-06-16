@@ -1,0 +1,120 @@
+import numpy as np
+import math
+from tqdm import tqdm
+import pickle
+
+niter = 100  # Number of iterations
+report_intervals = 20
+# ---------------------------------- Part 0: Creating a Back propagation object  --------------------------------------
+
+
+class SRN:
+    def __init__(self, n, m, h):
+        n += h
+        self.n = n
+        self.m = m
+        self.h = h
+        self.interval = 0.05
+        self.weights_IH = self.interval * 2 * np.random.random((n+1, h)) - self.interval
+        self.weights_HO = self.interval * 2 * np.random.random((h+1, m)) - self.interval
+
+    def __str__(self):
+        return 'A srn object with {self.n} inputs, {self.m} outputs, and {self.h} hidden units.'.format(self=self)
+
+    def test(self, I):
+        vfunc = np.vectorize(self.squash)
+        H2 = np.zeros(self.weights_IH.shape[1])
+        counter = 0
+
+        O = np.array(np.zeros((I.shape[0], 1)))
+
+        for ii in I:
+            ii = np.append(ii, H2)
+            ii = np.append(ii, 1)
+            Hnet = np.array(np.dot(ii, self.weights_IH))
+            H = np.array(vfunc(Hnet))
+            Onet = np.dot(np.append(H, 1), self.weights_HO)
+            O[counter] = vfunc(Onet)
+            counter += 1
+        return O
+
+    def train(self, input_pattern, target_pattern, iterations, eta, mu, lambada):
+
+        report_interval = np.round(iterations/report_intervals, 0)
+
+        fakes_to_append = np.array(np.zeros((input_pattern.shape[0], self.h)))
+        input_pattern = np.hstack((input_pattern, fakes_to_append))
+
+        input_pattern_copy = input_pattern
+        input_rows = input_pattern.shape[0]
+        to_append = np.array(np.ones((input_rows, 1)))
+        input_pattern = np.hstack((input_pattern, to_append))
+        vfunc = np.vectorize(self.squash)
+        vfunc2 = np.vectorize(self.squash_prime)
+        delta_w_IH_prev = np.array(np.zeros((self.n + 1, self.h)))
+        delta_w_HO_prev = np.array(np.zeros((self.h + 1, self.m)))
+        print("Training SRN...")
+        for ii in tqdm(range(iterations)):
+
+            RMS = 0
+            delta_w_IH = np.array(np.zeros((self.n + 1, self.h)))
+            delta_w_HO = np.array(np.zeros((self.h + 1, self.m)))
+            for j in range(input_rows):
+                if j > 0 or ii > 0:
+                    for kk in range(self.h):
+                        input_pattern[j, self.n-self.h + kk] = H[kk]
+
+                Ij = input_pattern[j, :]
+                Hnet = np.array(np.dot(Ij, self.weights_IH))
+                H = np.array(vfunc(Hnet))
+                Onet = np.dot(np.append(H, 1), self.weights_HO)
+                O = vfunc(Onet)
+
+                Tj = target_pattern[j, :]
+
+                Err = Tj - O
+                RMS += sum(Err ** 2)
+                del_O = np.array([a*b for a, b in zip(Tj-O, vfunc2(Onet))])
+
+                temp = (np.dot(del_O, self.weights_HO.T))[:-1]
+                del_H = np.array([a*b for a, b in zip(temp, vfunc2(Hnet))])
+                delta_w_IH += np.outer(Ij.T, del_H)
+                delta_w_HO += np.outer(np.append(H, 1).T, del_O)
+
+                weight_change_IH = eta*delta_w_IH + mu*delta_w_IH_prev - lambada * self.weights_IH
+                delta_w_IH_prev = delta_w_IH
+                delta_w_IH = weight_change_IH
+                self.weights_IH += weight_change_IH
+
+                weight_change_HO = eta * delta_w_HO + mu*delta_w_HO_prev - lambada * self.weights_HO
+                delta_w_HO_prev = delta_w_HO
+                delta_w_HO = weight_change_HO
+                self.weights_HO += weight_change_HO
+            temp_RMS = RMS
+            RMS = np.sqrt(RMS / (input_rows * self.m))
+
+
+            if (ii % report_interval) == 0:
+                print("RMS: ", np.round(RMS, 4))
+                #print(input_pattern)
+                print(temp_RMS)
+            RMS = 0
+            temp_RMS = 0
+
+    @staticmethod
+    def squash(element):
+        return 1 / (1 + math.exp(-element))
+
+    def squash_prime(self, element):
+        return self.squash(element) * (1 - self.squash(element))
+
+    def save(self, filename):
+        pickle_out = open(filename, "wb")
+        pickle.dump({"WIH": self.weights_IH, "WHO": self.weights_HO}, pickle_out)
+        pickle_out.close()
+
+    def load(self, filename):
+        pickle_in = open(filename, "rb")
+        a = pickle.load(pickle_in)
+        self.weights_IH = a["WIH"]
+        self.weights_HO = a["WHO"]
